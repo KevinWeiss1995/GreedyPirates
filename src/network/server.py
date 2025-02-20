@@ -1,4 +1,6 @@
 import asyncio
+import socket
+import subprocess
 from typing import Dict, Set, Optional, List
 from .protocol import Protocol
 from .messages import (
@@ -32,15 +34,43 @@ class GameServer:
         
     async def start(self):
         """Start the server"""
-        server = await asyncio.start_server(
-            self.handle_client, self.host, self.port
-        )
-        
-        self.running = True
-        self.logger.info(f"Server running on {self.host}:{self.port}")
-        
-        async with server:
-            await server.serve_forever()
+        try:
+            # Print network info
+            print("\nServer Network Configuration:")
+            print("----------------------------")
+            result = subprocess.run(['ifconfig'], capture_output=True, text=True)
+            print(result.stdout)
+            
+            # Create server
+            server = await asyncio.start_server(
+                self.handle_client,
+                host='::',  # Listen on all IPv6 interfaces
+                port=self.port,
+                family=socket.AF_INET6,
+                reuse_address=True
+            )
+            
+            self.running = True
+            
+            # Print detailed binding information
+            for sock in server.sockets:
+                print(f"\nSocket Information:")
+                print(f"Local Address: {sock.getsockname()}")
+                print(f"Socket Family: {sock.family}")
+                print(f"Socket Type: {sock.type}")
+                
+            print("\nServer is ready for connections!")
+            print(f"Local clients can connect using: localhost:{self.port}")
+            print(f"Remote clients can connect using: [2606:69c0:9120:5403::2585]:{self.port}")
+            
+            async with server:
+                await server.serve_forever()
+                
+        except Exception as e:
+            self.logger.error(f"Server start error: {e}")
+            print(f"\nError starting server: {e}")
+            print("Try running with sudo if this is a permission error")
+            raise
             
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         """Handle a client connection"""
