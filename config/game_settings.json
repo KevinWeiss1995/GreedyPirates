@@ -1,0 +1,10 @@
+{
+    "game": {
+        "min_players": 3,
+        "max_players": 8,
+        "max_rounds": 10,
+        "treasure_amount": 100,
+        "bid_timeout": 30,
+        "round_timeout": 60
+    }
+}

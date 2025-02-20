@@ -1,0 +1,14 @@
+{
+    "server": {
+        "host": "localhost",
+        "port": 8888,
+        "reconnect_attempts": 3,
+        "timeout": 5
+    },
+    "client": {
+        "default_host": "localhost",
+        "default_port": 8888,
+        "connect_timeout": 5,
+        "message_timeout": 10
+    }
+}

@@ -1,0 +1,11 @@
+README.md
+setup.py
+greedy_pirates.egg-info/PKG-INFO
+greedy_pirates.egg-info/SOURCES.txt
+greedy_pirates.egg-info/dependency_links.txt
+greedy_pirates.egg-info/top_level.txt
+tests/__init__.py
+tests/test_game_state.py
+tests/test_network.py
+tests/test_player.py
+tests/test_smpc.py
