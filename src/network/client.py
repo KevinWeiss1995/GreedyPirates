@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+import socket
 from typing import Dict, Optional, Callable, Any
 from asyncio import StreamReader, StreamWriter
 from .protocol import Protocol
@@ -30,9 +31,49 @@ class GameClient:
     async def connect(self, player_name: str) -> bool:
         """Connect to the game server"""
         try:
-            self.reader, self.writer = await asyncio.open_connection(
-                self.host, self.port
-            )
+            print(f"\nAttempting connection to {self.host}:{self.port}")
+            print("Connection details:")
+            print(f"  Host: {self.host}")
+            print(f"  Port: {self.port}")
+            
+            # Try localhost first if no host specified
+            if not self.host:
+                print("No host specified, trying localhost")
+                self.host = 'localhost'
+            
+            # Handle IPv6 address
+            if ':' in self.host:
+                print("IPv6 address detected")
+                self.host = self.host.strip('[]')
+                print(f"Formatted IPv6 address: {self.host}")
+            
+            print("\nResolving address...")
+            try:
+                addrinfo = socket.getaddrinfo(
+                    self.host,
+                    self.port,
+                    socket.AF_UNSPEC,  # Try both IPv4 and IPv6
+                    socket.SOCK_STREAM
+                )
+                print(f"Address resolved: {addrinfo}")
+            except socket.gaierror as e:
+                print(f"Failed to resolve address: {e}")
+                return False
+            
+            print("\nAttempting connection...")
+            try:
+                self.reader, self.writer = await asyncio.wait_for(
+                    asyncio.open_connection(
+                        host=self.host,
+                        port=self.port
+                    ),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                print("Connection timed out after 5 seconds")
+                return False
+            
+            print("Connection established!")
             
             # Send join message
             join_msg = JoinMessage(self.player_id, player_name)
@@ -43,6 +84,8 @@ class GameClient:
             
         except Exception as e:
             self.logger.error(f"Connection error: {e}")
+            print(f"\nDetailed connection error: {str(e)}")
+            print(f"Error type: {type(e)}")
             return False
     
     async def send_message(self, message: Message):
