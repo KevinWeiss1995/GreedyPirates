@@ -1,46 +1,60 @@
 import json
 from typing import Optional
-from .messages import Message, MessageType, JoinMessage, BidMessage, StartRoundMessage, EndRoundMessage, GameOverMessage, ErrorMessage
+from .messages import Message, MessageType, JoinMessage, BidMessage, StartRoundMessage, EndRoundMessage, GameOverMessage, ErrorMessage, SessionKeyMessage
 
 class Protocol:
     @staticmethod
     def serialize(message: Message) -> bytes:
         """Serialize a message to bytes"""
         data = {
-            'type': message.type.value,
+            'type': message.type.name,
             'player_id': message.player_id,
-            'data': message.data,
-            'round_num': message.round_num
+            'data': message.data
         }
-        return json.dumps(data).encode() + b'\n'
-
+        # Ensure exactly one newline at the end
+        return (json.dumps(data) + '\n').encode('utf-8')
+        
     @staticmethod
-    def deserialize(data: bytes) -> Optional[Message]:
-        """Deserialize bytes to a message"""
+    def deserialize(data: str) -> Message:
+        """Deserialize a message from string"""
         try:
-            message_dict = json.loads(data.decode().strip())
-            msg_type = MessageType(message_dict['type'])
-            player_id = message_dict['player_id']
-            msg_data = message_dict['data']
-            round_num = message_dict.get('round_num')
-
+            # Remove any extra whitespace or newlines
+            data = data.strip()
+            if not data:
+                raise ValueError("Empty message")
+                
+            parsed = json.loads(data)
+            msg_type = MessageType[parsed['type']]
+            player_id = parsed.get('player_id')
+            data = parsed.get('data', {})
+            
+            # Create appropriate message type
             if msg_type == MessageType.JOIN:
-                return JoinMessage(player_id, msg_data['player_name'])
+                return JoinMessage(
+                    player_id=player_id,
+                    player_name=data.get('player_name', ''),
+                    public_key=data.get('public_key', '')
+                )
             elif msg_type == MessageType.BID:
-                return BidMessage(player_id, round_num, msg_data['value'])
+                return BidMessage(data.get('encrypted_bids', {}))
             elif msg_type == MessageType.START_ROUND:
-                return StartRoundMessage(round_num)
+                return StartRoundMessage(data.get('round', 1))
             elif msg_type == MessageType.END_ROUND:
-                return EndRoundMessage(round_num, msg_data['results'])
+                return EndRoundMessage(data.get('round', 1), data.get('results', {}))
             elif msg_type == MessageType.GAME_OVER:
-                return GameOverMessage(msg_data['final_scores'])
+                return GameOverMessage(data.get('winners', []), data.get('scores', {}))
             elif msg_type == MessageType.ERROR:
-                return ErrorMessage(msg_data['error'])
+                return ErrorMessage(data.get('error', ''))
+            elif msg_type == MessageType.SESSION_KEY:
+                return SessionKeyMessage(
+                    data.get('target_id', ''),
+                    data.get('encrypted_key', '')
+                )
             else:
-                return Message(msg_type, player_id, msg_data, round_num)
+                raise ValueError(f"Unknown message type: {msg_type}")
+                
         except Exception as e:
-            print(f"Error deserializing message: {e}")
-            return None
+            raise ValueError(f"Error deserializing message: {e}")
 
     @staticmethod
     def validate_message(message: Message) -> Optional[str]:

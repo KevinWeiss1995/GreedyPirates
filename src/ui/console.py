@@ -14,6 +14,7 @@ class ConsoleUI:
         self.client: Optional[GameClient] = None
         self.running = False
         self.current_round = 0
+        self._round_active = False
         
     async def start(self):
         """Start the console UI"""
@@ -108,32 +109,56 @@ class ConsoleUI:
     
     async def place_bid(self, amount: int):
         """Place a bid in the current round"""
-        if not self.client or not self.current_round:
-            print("Cannot bid now - game not in progress")
+        print(f"DEBUG: Attempting to place bid. _round_active = {self._round_active}")  # Debug log
+        
+        if not self.client:
+            print("Cannot bid - not connected to server")
+            return
+            
+        if not self._round_active:
+            print("Cannot bid now - waiting for round to start")
+            print(f"DEBUG: Bid rejected - round not active")  # Debug log
             return
             
         try:
-            await self.client.send_bid(self.current_round, amount)
+            await self.client.send_bid(amount)
             print(f"Placed bid of {amount}")
         except Exception as e:
             print(f"Error placing bid: {e}")
     
     async def handle_start_round(self, message: Message):
         """Handle start of round message"""
-        self.current_round = message.round_num
+        print("DEBUG: Received START_ROUND message")  # Debug log
+        self.current_round = message.data.get('round', 1)
+        self._round_active = True
+        if self.client:
+            self._round_active = self.client._round_active  # Sync with client's state
+        print(f"DEBUG: ConsoleUI round_active = {self._round_active}")  # Debug log
+        
         print(f"\nRound {self.current_round} started!")
         print("Enter your bid with: bid <amount>")
     
     async def handle_end_round(self, message: Message):
         """Handle end of round message"""
+        print("\n=== ConsoleUI: Processing Round End ===")  # Added marker
+        self._round_active = False
         results = message.data.get('results', {})
-        print("\nRound Results:")
-        for player_info in results.values():
-            name = player_info['name']
-            bid = player_info['bid']
-            share = player_info['share']
-            print(f"{name}: bid {bid}, received {share} gold")
-        print(f"\nRound {message.round_num + 1} started!")
+        print(f"DEBUG: ConsoleUI received results: {results}")  # Added debug
+        
+        print("\n=== Round Results ===")
+        for player_id, result in results.items():
+            print(f"DEBUG: Processing result for player {player_id}: {result}")  # Added debug
+            if isinstance(result, dict):
+                name = result.get('name', player_id)
+                bid = result.get('bid', '?')
+                share = result.get('share', '?')
+                print(f"{name}: bid {bid}, received {share} gold")
+            else:
+                print(f"Player {player_id}: {result}")
+        print("==================\n")
+        
+        print(f"DEBUG: ConsoleUI finished processing round end")  # Added debug
+        print(f"Round {self.current_round + 1} started!")
         print("Enter your bid with: bid <amount>")
     
     async def handle_game_over(self, message: Message):
@@ -160,7 +185,6 @@ class ConsoleUI:
         print("  quit         - Exit the game")
 
 def main():
-    """Main entry point"""
     ui = ConsoleUI()
     try:
         asyncio.run(ui.start())

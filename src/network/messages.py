@@ -1,14 +1,17 @@
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, auto
 from typing import Dict, Any, Optional
+import json
+import base64
 
 class MessageType(Enum):
-    JOIN = 'join'
-    BID = 'bid'
-    START_ROUND = 'start_round'
-    END_ROUND = 'end_round'
-    GAME_OVER = 'game_over'
-    ERROR = 'error'
+    JOIN = auto()
+    BID = auto()
+    START_ROUND = auto()
+    END_ROUND = auto()
+    GAME_OVER = auto()
+    ERROR = auto()
+    SESSION_KEY = auto()  # New message type for key exchange
 
 @dataclass
 class Message:
@@ -19,29 +22,31 @@ class Message:
 
 @dataclass
 class JoinMessage(Message):
-    def __init__(self, player_id: str, player_name: str):
+    def __init__(self, player_id: str, player_name: str, public_key: str):
         super().__init__(
-            type=MessageType.JOIN,
-            player_id=player_id,
-            data={'player_name': player_name}
+            MessageType.JOIN,
+            player_id,
+            {
+                'player_name': player_name,
+                'public_key': public_key
+            }
         )
 
 @dataclass
 class BidMessage(Message):
-    def __init__(self, player_id: str, round_num: int, bid_value: int):
+    def __init__(self, encrypted_bids: Dict[str, str]):
         super().__init__(
-            type=MessageType.BID,
-            player_id=player_id,
-            round_num=round_num,
-            data={'value': bid_value}
+            MessageType.BID,
+            None,
+            {'encrypted_bids': encrypted_bids}
         )
 
 @dataclass
 class StartRoundMessage(Message):
     def __init__(self, round_num: int):
         super().__init__(
-            type=MessageType.START_ROUND,
-            player_id='server',
+            MessageType.START_ROUND,
+            'server',
             round_num=round_num,
             data={}
         )
@@ -50,8 +55,8 @@ class StartRoundMessage(Message):
 class EndRoundMessage(Message):
     def __init__(self, round_num: int, results: Dict[str, int]):
         super().__init__(
-            type=MessageType.END_ROUND,
-            player_id='server',
+            MessageType.END_ROUND,
+            'server',
             round_num=round_num,
             data={'results': results}
         )
@@ -60,8 +65,8 @@ class EndRoundMessage(Message):
 class GameOverMessage(Message):
     def __init__(self, final_scores: Dict[str, int]):
         super().__init__(
-            type=MessageType.GAME_OVER,
-            player_id='server',
+            MessageType.GAME_OVER,
+            'server',
             data={'final_scores': final_scores}
         )
 
@@ -69,7 +74,19 @@ class GameOverMessage(Message):
 class ErrorMessage(Message):
     def __init__(self, error_msg: str):
         super().__init__(
-            type=MessageType.ERROR,
-            player_id='server',
+            MessageType.ERROR,
+            'server',
             data={'error': error_msg}
+        )
+
+@dataclass
+class SessionKeyMessage(Message):
+    def __init__(self, target_id: str, encrypted_key: str):
+        super().__init__(
+            MessageType.SESSION_KEY,
+            None,
+            {
+                'target_id': target_id,
+                'encrypted_key': encrypted_key
+            }
         )

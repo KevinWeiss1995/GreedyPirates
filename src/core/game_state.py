@@ -2,17 +2,22 @@ from typing import Dict, List, Optional
 from .player import Player
 from .treasure import TreasureChest
 from src.crypto.smpc import BidManager, Share
+import logging
+
+class BidVerificationError(Exception):
+    """Error during bid verification"""
+    pass
 
 class GameState:
     TREASURE_AMOUNT = 100  # Total treasure to bid on each round
     
-    def __init__(self, min_players: int = 3, max_players: int = 8, max_rounds: int = 10):
+    def __init__(self, min_players: int = 3, max_players: int = 6, max_rounds: int = 10):
         self.min_players = min_players
         self.max_players = max_players
         self.max_rounds = max_rounds
-        self.players: Dict[str, str] = {}  # player_id -> player_name
+        self.players = []
         self.scores: Dict[str, int] = {}   # player_id -> total score
-        self.bids: Dict[str, int] = {}     # player_id -> current bid
+        self.bids = {}  # player_id -> encrypted_bids
         self.current_round = 0  # Will be set to 1 when first round starts
         self.round_active = False
         self.treasure_amount = self.TREASURE_AMOUNT  # Default treasure amount per round
@@ -20,20 +25,22 @@ class GameState:
         self.bid_manager: Optional[BidManager] = None
         self.received_shares: Dict[str, Dict[str, Share]] = {}  # player_id -> {from_player_id -> Share}
         self.game_complete: bool = False
+        self.logger = logging.getLogger('game_state')
+        self.encrypted_bids = {}
+        self.decrypted_bids = {}
         
     def add_player(self, player_id: str, player_name: str) -> None:
         """Add a player to the game"""
-        self.players[player_id] = player_name
+        self.players.append(player_id)
         self.scores[player_id] = 0
-        
-        # Start first round if we have enough players
+       
         if len(self.players) >= self.min_players and self.current_round == 0:
             self.start_round()
     
     def remove_player(self, player_id: str) -> None:
         """Remove a player from the game"""
         if player_id in self.players:
-            del self.players[player_id]
+            self.players.remove(player_id)
         if player_id in self.scores:
             del self.scores[player_id]
         if player_id in self.bids:
@@ -41,30 +48,61 @@ class GameState:
     
     def start_round(self) -> None:
         """Start a new round"""
+        if not self.players:
+            raise ValueError("Cannot start round - no players")
+            
+        if len(self.players) < self.min_players:
+            raise ValueError(f"Need at least {self.min_players} players to start")
+            
         self.current_round += 1
-        self.bids.clear()
         self.round_active = True
+        self.bids.clear()
+        self.encrypted_bids.clear() 
+        self.decrypted_bids.clear() 
+        
+        self.logger.info(f"Starting round {self.current_round}")
+        
         self.received_shares = {pid: {} for pid in self.players}
         self.treasure_amount = self.TREASURE_AMOUNT  # Reset treasure amount for new round
     
-    def place_bid(self, player_id: str, bid_value: int) -> None:
+    def reset_round(self):
+        """Reset the round state"""
+        self.bids.clear()
+        self.round_active = False
+        print(f"Reset round state")
+    
+    def place_bid(self, player_id: str, bid_data: dict):
         """Place a bid for a player"""
         if not self.round_active:
-            raise ValueError("Round not active")
-        if player_id not in self.players:
-            raise ValueError("Player not in game")
-        if bid_value < 0:
-            raise ValueError("Bid cannot be negative")
+            raise ValueError("Cannot bid - round not active")
             
-        self.bids[player_id] = bid_value
+        if player_id not in self.players:
+            raise ValueError(f"Unknown player {player_id}")
+            
+        if player_id in self.bids:
+            raise ValueError(f"Player {player_id} already bid this round")
+            
+        # Store the encrypted bid data directly
+        self.bids[player_id] = bid_data
     
     def all_bids_placed(self) -> bool:
         """Check if all players have placed bids"""
         return len(self.bids) == len(self.players)
     
+    def calculate_results(self) -> dict:
+        """Calculate round results"""
+        # For now, just return the encrypted bids
+        # Actual bid comparison will happen after decryption
+        return {
+            player: "bid_placed" 
+            for player in self.bids.keys()
+        }
+    
     def calculate_round_results(self) -> Dict[str, Dict[str, int]]:
         """Calculate the results for the current round"""
-        total_bids = sum(self.bids.values())
+        print(f"DEBUG: Calculating results with bids: {self.bids}")  # Debug print
+        
+        total_bids = sum(int(bid) for bid in self.bids.values())
         results = {}
         
         if total_bids == 0:  # Prevent division by zero
@@ -72,21 +110,22 @@ class GameState:
             share = self.treasure_amount // len(self.players)
             for player_id in self.players:
                 results[player_id] = {
-                    'name': self.players[player_id],
+                    'name': player_id,
                     'bid': self.bids.get(player_id, 0),
                     'share': share
                 }
         else:
             # Calculate proportional shares
             for player_id, bid in self.bids.items():
-                share = (bid * self.treasure_amount) // total_bids
+                share = (int(bid) * self.treasure_amount) // total_bids
                 results[player_id] = {
-                    'name': self.players[player_id],
+                    'name': player_id,
                     'bid': bid,
                     'share': share
                 }
                 self.scores[player_id] += share
                 
+        print(f"DEBUG: Calculated results: {results}")  # Debug print
         self.round_active = False
         return results
     
@@ -171,3 +210,67 @@ class GameState:
             },
             "game_complete": self.current_round >= self.max_rounds
         }
+    
+    def place_encrypted_bid(self, player_id: str, encrypted_bids: Dict[str, str]) -> None:
+        """Place encrypted bids for a player"""
+        if not self.round_active:
+            raise ValueError("Round not active")
+        if player_id not in self.players:
+            raise ValueError("Player not in game")
+            
+        # Store encrypted bids for later processing
+        if not hasattr(self, 'encrypted_bids'):
+            self.encrypted_bids = {}
+        self.encrypted_bids[player_id] = encrypted_bids
+        
+    def verify_bid_consistency(self, player_id: str) -> Optional[int]:
+        """Verify that all decrypted copies of a bid match"""
+        if player_id not in self.decrypted_bids:
+            return None
+            
+        bid_values = set(self.decrypted_bids[player_id].values())
+        
+        if not bid_values:
+            raise BidVerificationError(f"No decrypted bids found for {player_id}")
+            
+        if len(bid_values) > 1:
+            # Log the inconsistent values for debugging
+            self.logger.error(f"Inconsistent bids from {player_id}: {self.decrypted_bids[player_id]}")
+            raise BidVerificationError(f"Player {player_id} submitted inconsistent bids")
+            
+        bid_value = bid_values.pop()
+        if not isinstance(bid_value, int) or bid_value < 0:
+            raise BidVerificationError(f"Invalid bid value from {player_id}: {bid_value}")
+            
+        return bid_value
+        
+    def process_decrypted_bid(self, from_player: str, for_player: str, bid_value: int) -> None:
+        """Process a decrypted bid value with verification"""
+        try:
+            if not self.round_active:
+                raise ValueError("Round not active")
+                
+            if from_player not in self.players or for_player not in self.players:
+                raise ValueError("Invalid player ID")
+                
+            if not isinstance(bid_value, int) or bid_value < 0:
+                raise ValueError("Invalid bid value")
+                
+            # Store decrypted bid
+            if not hasattr(self, 'decrypted_bids'):
+                self.decrypted_bids = {}
+            if from_player not in self.decrypted_bids:
+                self.decrypted_bids[from_player] = {}
+                
+            self.decrypted_bids[from_player][for_player] = bid_value
+            
+            # Check if we have all decrypted bids for this player
+            if len(self.decrypted_bids[from_player]) == len(self.players) - 1:
+                verified_bid = self.verify_bid_consistency(from_player)
+                if verified_bid is not None:
+                    self.bids[from_player] = verified_bid
+                    self.logger.info(f"Verified bid from {from_player}: {verified_bid}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error processing bid: {e}")
+            raise

@@ -6,6 +6,9 @@ from dataclasses import dataclass
 import os
 import base64
 
+class EncryptionError(Exception):
+    pass
+
 @dataclass
 class KeyPair:
     public_key: rsa.RSAPublicKey
@@ -24,28 +27,86 @@ class KeyPair:
 
 class KeyManager:
     def __init__(self):
-        self.keypair: KeyPair = None
-        self.peer_keys: dict[str, rsa.RSAPublicKey] = {}
+        self.keypair = None
+        self.peer_keys = {}
         
-    def generate_keypair(self, key_size: int = 2048) -> KeyPair:
+    def generate_keypair(self):
         """Generate a new RSA keypair"""
         private_key = rsa.generate_private_key(
             public_exponent=65537,
-            key_size=key_size,
+            key_size=2048,
             backend=default_backend()
         )
-        public_key = private_key.public_key()
-        self.keypair = KeyPair(public_key, private_key)
-        return self.keypair
-    
-    def load_peer_key(self, player_id: str, key_data: str) -> None:
-        """Load a peer's public key from base64 string"""
-        key_bytes = base64.b64decode(key_data)
-        public_key = serialization.load_pem_public_key(
-            key_bytes,
-            backend=default_backend()
+        self.keypair = private_key
+        
+    def get_public_key_string(self) -> str:
+        """Get public key as PEM string"""
+        if not self.keypair:
+            raise ValueError("No keypair generated")
+            
+        public_key = self.keypair.public_key()
+        pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
         )
-        self.peer_keys[player_id] = public_key
+        return pem.decode('utf-8')
+        
+    def encrypt(self, data: bytes, public_key_pem: str) -> bytes:
+        """Encrypt data using a public key"""
+        try:
+            # Convert PEM string to public key object
+            public_key = serialization.load_pem_public_key(
+                public_key_pem.encode('utf-8'),
+                backend=default_backend()
+            )
+            
+            # Encrypt the data
+            encrypted = public_key.encrypt(
+                data,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None
+                )
+            )
+            
+            return base64.b64encode(encrypted)
+            
+        except Exception as e:
+            raise EncryptionError(f"Failed to encrypt: {e}")
+            
+    def decrypt(self, encrypted_data: bytes) -> bytes:
+        """Decrypt data using private key"""
+        try:
+            # Decode base64 and decrypt
+            encrypted = base64.b64decode(encrypted_data)
+            
+            decrypted = self.keypair.decrypt(
+                encrypted,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None
+                )
+            )
+            return decrypted
+            
+        except Exception as e:
+            raise EncryptionError(f"Failed to decrypt: {e}")
+            
+    def load_peer_key(self, peer_id: str, public_key_pem: str):
+        """Store a peer's public key"""
+        try:
+            # Validate the key format before storing
+            serialization.load_pem_public_key(
+                public_key_pem.encode('utf-8'),
+                backend=default_backend()
+            )
+            self.peer_keys[peer_id] = public_key_pem
+            print(f"Debug: Stored valid PEM key for {peer_id}")
+        except Exception as e:
+            print(f"Debug: Invalid key format from {peer_id}: {e}")
+            raise
     
     def encrypt_for_peer(self, player_id: str, data: bytes) -> bytes:
         """Encrypt data for a specific peer"""
@@ -53,7 +114,10 @@ class KeyManager:
             raise ValueError(f"No public key found for player {player_id}")
             
         peer_key = self.peer_keys[player_id]
-        encrypted = peer_key.encrypt(
+        encrypted = serialization.load_pem_public_key(
+            peer_key.encode('utf-8'),
+            backend=default_backend()
+        ).encrypt(
             data,
             padding.OAEP(
                 mgf=padding.MGF1(algorithm=hashes.SHA256()),
@@ -61,22 +125,7 @@ class KeyManager:
                 label=None
             )
         )
-        return encrypted
-    
-    def decrypt(self, encrypted_data: bytes) -> bytes:
-        """Decrypt data using our private key"""
-        if not self.keypair:
-            raise ValueError("No keypair loaded")
-            
-        decrypted = self.keypair.private_key.decrypt(
-            encrypted_data,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
-            )
-        )
-        return decrypted
+        return base64.b64encode(encrypted)
     
     def generate_session_key(self) -> bytes:
         """Generate a random session key for symmetric encryption"""
